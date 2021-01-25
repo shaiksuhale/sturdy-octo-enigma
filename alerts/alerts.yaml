@@ -1,0 +1,508 @@
+apiVersion: v1
+data:
+  alert-test.yaml: |-
+    groups:
+    - name: machineq
+      rules:
+      - alert: MQMethodErrors99
+        expr: ((sum(rate(grpc_server_handled_total{env="prod",grpc_code="OK"}[2m])) by (app,grpc_method)) / (sum(rate(grpc_server_handled_total{env="prod",grpc_code!~"Unimplemented|Unauthenticated|NotFound|PermissionDenied|AlreadyExists|InvalidArgument"}[2m])) by (app,grpc_method))) < .99
+        for: 5m
+        labels:
+          group: machineq
+          severity: warning
+        annotations:
+          summary: "{{ $labels.app }} - {{ $labels.grpc_method }} success rate dropped to {{ $value }}"
+          description: "{{ $labels.app }} - {{ $labels.grpc_method }} success rate dropped to {{ $value }} - \n{{ $labels }}"
+      - alert: MQMethodErrors97
+        expr: ((sum(rate(grpc_server_handled_total{env="prod",grpc_code="OK"}[2m])) by (app,grpc_method)) / (sum(rate(grpc_server_handled_total{env="prod",grpc_code!~"Unimplemented|Unauthenticated|NotFound|PermissionDenied|AlreadyExists|InvalidArgument"}[2m])) by (app,grpc_method))) < .97
+        for: 5m
+        labels:
+          group: machineq
+          severity: critical
+        annotations:
+          summary: "{{ $labels.app }} - {{ $labels.grpc_method }} success rate dropped to {{ $value }}"
+          description: "{{ $labels.app }} - {{ $labels.grpc_method }} success rate dropped to {{ $value }} - \n{{ $labels }}"
+      - alert: Inputbus🠂RabbitMQ
+        expr: abs(1 - clamp_max(sum(rate(rabbitmq_exchange_messages_published_in_total{release=~".*prod.*", exchange="inputbus"}[2m]))/sum(rate(nginx_ingress_controller_requests{env="prod",service=~"(inputbus.*)", status="201"}[2m])), 1)) > .05
+        for: 5m
+        labels:
+          group: machineq
+          severity: critical
+        annotations:
+          summary: "Inputbus 🠂 RabbitMQ relative diffence greater then 5%"
+          description: "Inputbus 🠂 RabbitMQ relative differene greater the 5% {{ $labels }}"
+      - alert: MQ DB Pool 50%
+        expr: (sum(pgx_checked_out_connections{env="prod"}) by (app, region) / sum(pgx_current_connections{env="prod"}) by (app,region)) > .5
+        for: 2m
+        labels:
+          group: machineq
+          severity: warning
+        annotations:
+          summary: "MQ {{ $labels.app}} {{ $labels.region }} db pool > 50%"
+          description: "Database connection pool size for {{ $labels.app}} in {{ $labels.region}} at {{ $value }}\nLABELS: {{ $labels }}"
+      - alert: MQ DB Pool 90%
+        expr: (sum(pgx_checked_out_connections{env="prod"}) by (app, region) / sum(pgx_current_connections{env="prod"}) by (app,region)) > .9
+        for: 2m
+        labels:
+          group: machineq
+          severity: critical
+        annotations:
+          summary: "MQ {{ $labels.app}} {{ $labels.region }} db pool > 90%"
+          description: "Database connection pool size for {{ $labels.app}} in {{ $labels.region}} at {{ $value }}\nLABELS: {{ $labels }}"
+    - name: inhibit_rules
+      rules:
+      - alert: 1amTo5am
+        expr: "hour() > (1 + 5)%24 and hour() < (5 + 5)%24"
+        labels:
+          group: inhibit_rules
+    - name: nginx
+      concurrency: 2
+      rules:
+      - record: ingress_success_rate
+        expr: sum(rate(nginx_ingress_controller_requests{env="prod",status!~"5.[02-9]"}[2m])) by (region, ingress, service) / sum(rate(nginx_ingress_controller_requests{env="prod"}[2m])) by (region, ingress, service) AND sum(rate(nginx_ingress_controller_requests{env="prod"}[2m])) by (region, service, ingress) > .5
+      - alert: IngressSuccessRateInputbus
+        expr: ingress_success_rate{service="inputbus"} < 0.999
+        for: 2m
+        labels:
+          severity: critical
+          group: nginx
+        annotations:
+          summary: "Inputbus 5xx error rate (instance {{ $labels.region }})"
+          description: "Too many HTTP requests with status 5xx (> 5%)VALUE = {{ $value }}LABELS: {{ $labels }}"
+          theshold: 0.999
+      - alert: IngressSuccessRate
+        expr: ingress_success_rate{service!="inputbus", ingress!="applijack-rpc"} < 0.98
+        for: 5m
+        labels:
+          severity: critical
+          group: nginx
+        annotations:
+          summary: "{{ $labels.service }} 5xx error rate (instance {{ $labels.region }})"
+          description: "Too many HTTP requests with status 5xx (> 5%)VALUE = {{ $value }}LABELS: {{ $labels }}"
+          threshold: 0.98
+      - record: rule:incoming_rate:inputbus:holt_winters
+        expr: holt_winters(sum(rate(nginx_ingress_controller_requests{env="prod", service="inputbus"}[2m]))[10m] offset 7d,.6,.4)
+      - alert: InputbusIncomingRateLow
+        expr: .85 * rule:incoming_rate:inputbus:holt_winters > sum(rate(nginx_ingress_controller_requests{env="prod", service="inputbus"}[2m]))
+        for: 2m
+        labels:
+          severity: warning
+          group: nginx
+        annotations:
+          summary: "Inputbus incoming rate Anomaly"
+          description: "Inputbus incoming rate anomaly "
+      - alert: TLSCertExpiring
+        expr: max(nginx_ingress_controller_ssl_expire_time_seconds{namespace=~".*",ingress=~".*"}) by (host) - time() < 86400 * 15
+        for: 10m
+        labels:
+          severity: warning
+          group: nginx
+        annotations:
+          summary: "TLS Cert for {{ $labels.host }} expiring soon"
+          description: "TLS Cert for {{ $labels.host }} expiring"
+    - name: kubernetes
+      concurrency: 1
+      rules:
+      - alert: KubernetesVolumeOutOfDiskSpace
+        expr: ((kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < .05) and kubelet_volume_stats_available_bytes < 1024*1024*1024*5
+        for: 5m
+        labels:
+          severity: critical
+          group: kubernetes
+        annotations:
+          summary: "Kubernetes Volume out of disk space (instance {{ $labels.instance }})"
+          description: "Volume is almost full\nVALUE = {{ $value }}\nLABELS: {{ $labels }}"
+      - alert: KubernetesVolumeFullInFourDays
+        expr: predict_linear((sum(kubelet_volume_stats_available_bytes{}) by (persistentvolumeclaim))[6h], 4 * 24 * 3600) < 0
+        for: 5m
+        labels:
+          severity: warning
+          group: kubernetes
+        annotations:
+          summary: "Kubernetes Volume full in four days (instance {{ $labels.instance }})"
+          description: "{{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is expected to fill up within four days. Currently {{ $value | humanize }}% is available.VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: KubernetesDeploymentProblem
+        expr: kube_deployment_status_condition{condition="Available", status="false", env=~"(infra|prod)"} > 0
+        for: 2m
+        labels:
+          severity: warning
+          group: kubernetes
+        annotations:
+          summary: "Kubernetes deployment Unavailable {{$labels.deployment }} {{ $labels.cluster}}"
+          description: "Kubernetes deployment Unavailable {{$labels.deployment}} {{$labels.cluster}}"
+    - name: rabbitmq
+      concurrency: 1
+      rules:
+      - alert: RabbitmqTooManyMessagesInQueue_inputbus
+        expr: rabbitmq_queue_messages_ready{queue="inputbus", release=~".*-prod"} > 500
+        for: 2m
+        labels:
+          severity: critical
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq too many messages in queue {{ $labels.queue }} {{ $labels.release }}"
+          description: "Queue is filling up (> 500 msgs)VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqTooManyMessagesInQueue_gatewayalerts
+        expr: rabbitmq_queue_messages_ready{queue="gateway_alerts", release=~".*-prod"} > 20
+        for: 2m
+        labels:
+          severity: critical
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq too many messages in queue {{ $labels.queue }} {{ $labels.release }}"
+          description: "Queue {{$labels.queue}} is filling up (> 20 msgs)VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqDown
+        expr: rabbitmq_up{release=~".*-prod"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq down (instance {{ $labels.release }})"
+          description: "RabbitMQ node downVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqClusterDown
+        expr: sum(rabbitmq_running) by (release) < 3
+        for: 5m
+        labels:
+          severity: critical
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq cluster down (instance {{ $labels.release }})"
+          description: "Less than 3 nodes running in RabbitMQ cluster VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqClusterPartition
+        expr: rabbitmq_partitions > 0
+        for: 5m
+        labels:
+          severity: warning
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq cluster partition (instance {{ $labels.release }})"
+          description: "Cluster partitionVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqOutOfMemory
+        expr: rabbitmq_node_mem_used / rabbitmq_node_mem_limit * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq out of memory (instance {{ $labels.release }})"
+          description: "Memory available for RabbmitMQ is low (< 10%)VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqDiskWarning4Hours
+        expr: max(rabbitmq_node_disk_free_limit{release=~".*prod"}) by (node) > predict_linear((sum(rabbitmq_node_disk_free{release=~".*prod"}) by (node))[6h], 4 * 24 * 3600)
+        for: 5m
+        labels:
+          severity: warning
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq out of disk in 4hrs (instance {{ $labels.release }})"
+          description: "Disk is running low VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: RabbitmqDiskAlarm
+        expr: max(rabbitmq_node_disk_free_alarm{release=~".*prod"}) by (node) > 0
+        for: 5m
+        labels:
+          severity: critical
+          group: rabbitmq
+        annotations:
+          summary: "Rabbitmq disk alarm (instance {{ $labels.release }})"
+          description: "RabbitMQ Disk alarm VALUE = {{ $value }}LABELS: {{ $labels }}"
+    - name: postgres
+      concurrency: 3
+      rules:
+      - alert: PostgresqlDown
+        expr: pg_up == 0
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql down (instance {{ $labels.release }})"
+          description: "Postgresql instance is downVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlRestarted
+        expr: time() - pg_postmaster_start_time_seconds < 60
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql restarted (instance {{ $labels.instance }})"
+          description: "Postgresql restartedVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlTooManyConnections
+        expr: sum by (datname) (pg_stat_activity_count{datname!~"template.*|postgres"}) > pg_settings_max_connections * 0.9
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql too many connections (instance {{ $labels.instance }})"
+          description: "PostgreSQL instance has too many connectionsVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlDeadLocks
+        expr: rate(pg_stat_database_deadlocks{datname!~"template.*|postgres"}[1m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql dead locks (instance {{ $labels.instance }})"
+          description: "PostgreSQL has dead-locksVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlSlowQueries
+        expr:   pg_slow_queries > 0
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql slow queries (instance {{ $labels.instance }})"
+          description: "PostgreSQL executes slow queriesVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlHighRollbackRate
+        expr: rate(pg_stat_database_xact_rollback{db_env="prod",datname!~"template.*"}[3m]) / rate(pg_stat_database_xact_commit{db_env="prod",datname!~"template.*"}[3m]) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql high rollback rate (instance {{ $labels.instance }})"
+          description: "Ratio of transactions being aborted compared to committed is > 2 %VALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlWaleReplicationStopped
+        expr: rate(pg_xlog_position_bytes[1m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql WALE replication stopped (instance {{ $labels.instance }})"
+          description: "WAL-E replication seems to be stoppedVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlHighRateStatementTimeout
+        expr: rate(postgresql_errors_total{type="statement_timeout"}[5m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql high rate statement timeout (instance {{ $labels.instance }})"
+          description: "Postgres transactions showing high rate of statement timeoutsVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlHighRateDeadlock
+        expr: rate(postgresql_errors_total{type="deadlock_detected"}[1m]) * 60 > 1
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql high rate deadlock (instance {{ $labels.instance }})"
+          description: "Postgres detected deadlocksVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlUnusedReplicationSlot
+        expr: pg_replication_slots_active == 0
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql unused replication slot (instance {{ $labels.instance }})"
+          description: "Unused Replication SlotsVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlTooManyDeadTuples
+        expr: ((pg_stat_user_tables_n_dead_tup{schemaname!~"_timescaledb.*"} > 10000) / (pg_stat_user_tables_n_live_tup{schemaname!~"_timescaledb.*"} + pg_stat_user_tables_n_dead_tup{schemaname!~"_timescaledb.*"})) >= 0.1 unless ON(instance) (pg_replication_is_replica == 1)
+        for: 10m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql too many dead tuples (instance {{ $labels.instance }})"
+          description: "PostgreSQL dead tuples is too largeVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlSplitBrain
+        expr: count(pg_replication_is_replica == 0) != 1
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql split brain (instance {{ $labels.instance }})"
+          description: "Split Brain, too many primary Postgresql databases in read-write modeVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlPromotedNode
+        expr: pg_replication_is_replica and changes(pg_replication_is_replica[1m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          group: postgresql
+        annotations:
+          summary: "Postgresql promoted node (instance {{ $labels.instance }})"
+          description: "Postgresql standby server has been promoted as primary nodeVALUE = {{ $value }}LABELS: {{ $labels }}"
+      - alert: PostgresqlTooManyLocksAcquired
+        expr: ((sum (pg_locks_count)) / (pg_settings_max_locks_per_transaction * pg_settings_max_connections)) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          group: postgresql
+        annotations:
+          summary: "Postgresql too many locks acquired (instance {{ $labels.instance }})"
+          description: "Too many locks acquired on the database. If this alert happens frequently, we may need to increase the postgres setting max_locks_per_transaction.VALUE = {{ $value }}LABELS: {{ $labels }}"
+    - name: connectivity
+      rules:
+      - alert: EndpointDown
+        expr: probe_success{env="prod"} == 0
+        for: 10s
+        labels:
+          severity: "critical"
+        annotations:
+          summary: "Endpoint {{ $labels.instance }} down"
+    - name: VMs
+      rules:
+      - alert: HostOutOfMemory
+        expr: node_memory_MemAvailable_bytes{job="az-hosts-prod"} / node_memory_MemTotal_bytes * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host out of memory (instance {{ $labels.instance }})
+          description: "Node memory is filling up (< 10% left)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostMemoryUnderMemoryPressure
+        expr: rate(node_vmstat_pgmajfault{job="az-hosts-prod"}[1m]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host memory under memory pressure (instance {{ $labels.instance }})
+          description: "The node is under heavy memory pressure. High rate of major page faults\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostUnusualNetworkThroughputIn
+        expr: sum by (instance) (irate(node_network_receive_bytes_total{job="az-hosts-prod"}[2m])) / 1024 / 1024 > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host unusual network throughput in (instance {{ $labels.instance }})
+          description: "Host network interfaces are probably receiving too much data (> 100 MB/s)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostUnusualNetworkThroughputOut
+        expr: sum by (instance) (irate(node_network_transmit_bytes_total{job="az-hosts-prod"}[2m])) / 1024 / 1024 > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host unusual network throughput out (instance {{ $labels.instance }})
+          description: "Host network interfaces are probably sending too much data (> 100 MB/s)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostUnusualDiskWriteRate
+        expr: sum by (instance) (irate(node_disk_written_bytes_total{job="az-hosts-prod"}[2m])) / 1024 / 1024 > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host unusual disk write rate (instance {{ $labels.instance }})
+          description: "Disk is probably writing too much data (> 50 MB/s)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      # please add ignored mountpoints in node_exporter parameters like
+      # "--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|run)($|/)"
+      - alert: HostOutOfDiskSpace
+        expr: (node_filesystem_avail_bytes{job="az-hosts-prod"} * 100) / node_filesystem_size_bytes < 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host out of disk space (instance {{ $labels.instance }})
+          description: "Disk is almost full (< 10% left)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostDiskWillFillIn4Hours
+        expr: predict_linear(node_filesystem_free_bytes{job="az-hosts-prod",fstype!~"tmpfs"}[1h], 4 * 3600) < 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host disk will fill in 4 hours (instance {{ $labels.instance }})
+          description: "Disk will fill in 4 hours at current write rate\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostOutOfInodes
+        expr: node_filesystem_files_free{job="az-hosts-prod",mountpoint ="/rootfs"} / node_filesystem_files{mountpoint ="/rootfs"} * 100 < 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host out of inodes (instance {{ $labels.instance }})
+          description: "Disk is almost running out of available inodes (< 10% left)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostUnusualDiskReadLatency
+        expr: rate(node_disk_read_time_seconds_total{job="az-hosts-prod"}[1m]) / rate(node_disk_reads_completed_total[1m]) > 0.1 and rate(node_disk_reads_completed_total{job="az-hosts-prod"}[1m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host unusual disk read latency (instance {{ $labels.instance }})
+          description: "Disk latency is growing (read operations > 100ms)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HostUnusualDiskWriteLatency
+        expr: rate(node_disk_write_time_seconds_total{job="az-hosts-prod"}[1m]) / rate(node_disk_writes_completed_total[1m]) > 0.1 and rate(node_disk_writes_completed_total{job="az-hosts-prod"}[1m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host unusual disk write latency (instance {{ $labels.instance }})
+          description: "Disk latency is growing (write operations > 100ms)\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: HighIOUtilizationWarning
+        expr: irate(node_disk_io_time_seconds_total{job="az-hosts-prod"}[1m]) > 0.6
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High IO utils."
+          description: "High IO utils on instance {{ $labels.instance }} of job {{ $labels.job }} over than 60%, current value is {{ $value }}%"
+      - alert: HighIOUtilizationCritical
+        expr: irate(node_disk_io_time_seconds_total{job="az-hosts-prod"}[1m]) > 0.8
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High IO utils."
+          description: "High IO utils on instance {{ $labels.instance }} of job {{ $labels.job }} over than 60%, current value is {{ $value }}%"
+      - alert: HostHighCpuLoad
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{job="az-hosts-prod",mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host high CPU load (instance {{ $labels.instance }})
+          description: "CPU load is > 80%\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+    - name: etcd
+      rules:
+      - alert: EtcdNoLeader
+        expr: etcd_server_has_leader{job="az-hosts-prod"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Etcd no Leader (instance {{ $labels.instance }})
+          description: "Etcd cluster have no leader\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: EtcdHighNumberOfLeaderChanges
+        expr: increase(etcd_server_leader_changes_seen_total{job="az-hosts-prod"}[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Etcd high number of leader changes (instance {{ $labels.instance }})
+          description: "Etcd leader changed more than 3 times during last hour\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: EtcdMemberCommunicationSlow
+        expr: histogram_quantile(0.99, rate(etcd_network_peer_round_trip_time_seconds_bucket{job="az-hosts-prod"}[5m])) > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Etcd member communication slow (instance {{ $labels.instance }})
+          description: "Etcd member communication slowing down, 99th percentil is over 0.15s for 5 minutes\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: EtcdHighNumberOfFailedProposals
+        expr: increase(etcd_server_proposals_failed_total{job="az-hosts-prod"}[1h]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Etcd high number of failed proposals (instance {{ $labels.instance }})
+          description: "Etcd server got more than 5 failed proposals past hour\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: EtcdHighFsyncDurations
+        expr: histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket{job="az-hosts-prod"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Etcd high fsync durations (instance {{ $labels.instance }})
+          description: "Etcd WAL fsync duration increasing, 99th percentil is over 0.5s for 5 minutes\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+      - alert: EtcdHighCommitDurations
+        expr: histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket{job="az-hosts-prod"}[5m])) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Etcd high commit durations (instance {{ $labels.instance }})
+          description: "Etcd commit duration increasing, 99th percentil is over 0.25s for 5 minutes\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
+
+kind: ConfigMap
+metadata:
+  name: alerts-test
+  namespace: metrics
