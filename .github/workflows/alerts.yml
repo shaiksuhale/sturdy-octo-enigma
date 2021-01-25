@@ -21,7 +21,8 @@ jobs:
       with:
         kubeconfig: ${{ secrets.CENTRALUS_INFRA_CAKE_KC }}
 
-    - uses: Azure/k8s-deploy@v1
+    - uses: Azure/k8s-deploy@v1.3
       with:
+        namespace: 'metrics'
         manifests: |
           alerts/alerts.yaml
