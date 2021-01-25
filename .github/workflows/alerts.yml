@@ -1,0 +1,27 @@
+name: 'Prometheus Alerts Deploy Workflow'
+on:
+  push:
+    paths:
+    - 'alerts/**'
+    branches:
+    - master
+
+defaults:
+  run:
+    working-directory: alerts
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+
+
+    - uses: Azure/k8s-set-context@v1
+      with:
+        kubeconfig: ${{ secrets.CENTRALUS_INFRA_CAKE_KC }}
+
+    - uses: Azure/k8s-deploy@v1
+      with:
+        manifests: |
+          alerts/alerts.yaml
