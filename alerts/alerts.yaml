@@ -1,8 +1,12 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alerts-test
+  namespace: metrics
 data:
   alert-test.yaml: |-
     groups:
-    - name: machineq11
+    - name: machineq22
       rules:
       - alert: MQMethodErrors83
         expr: ((sum(rate(grpc_server_handled_total{env="prod",grpc_code="OK"}[2m])) by (app,grpc_method)) / (sum(rate(grpc_server_handled_total{env="prod",grpc_code!~"Unimplemented|Unauthenticated|NotFound|PermissionDenied|AlreadyExists|InvalidArgument"}[2m])) by (app,grpc_method))) < .82
@@ -501,8 +505,3 @@ data:
         annotations:
           summary: Etcd high commit durations (instance {{ $labels.instance }})
           description: "Etcd commit duration increasing, 99th percentil is over 0.25s for 5 minutes\n  VALUE = {{ $value }}\n  LABELS: {{ $labels }}"
-
-kind: ConfigMap
-metadata:
-  name: alerts-test
-  namespace: metrics
