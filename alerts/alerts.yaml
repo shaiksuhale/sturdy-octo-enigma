@@ -4,7 +4,7 @@ data:
     groups:
     - name: machineq
       rules:
-      - alert: MQMethodErrors82
+      - alert: MQMethodErrors83
         expr: ((sum(rate(grpc_server_handled_total{env="prod",grpc_code="OK"}[2m])) by (app,grpc_method)) / (sum(rate(grpc_server_handled_total{env="prod",grpc_code!~"Unimplemented|Unauthenticated|NotFound|PermissionDenied|AlreadyExists|InvalidArgument"}[2m])) by (app,grpc_method))) < .82
         for: 5m
         labels:
