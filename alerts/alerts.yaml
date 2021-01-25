@@ -6,7 +6,7 @@ metadata:
 data:
   alert-test.yaml: |-
     groups:
-    - name: machineq22
+    - name: machineq33
       rules:
       - alert: MQMethodErrors83
         expr: ((sum(rate(grpc_server_handled_total{env="prod",grpc_code="OK"}[2m])) by (app,grpc_method)) / (sum(rate(grpc_server_handled_total{env="prod",grpc_code!~"Unimplemented|Unauthenticated|NotFound|PermissionDenied|AlreadyExists|InvalidArgument"}[2m])) by (app,grpc_method))) < .82
