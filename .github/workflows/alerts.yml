@@ -28,4 +28,4 @@ jobs:
           alerts/alerts.yaml
 
     - name: restart alert manager
-      run: kubectl restart deployment/vmalert-victoria-metrics-alert-server -n metrics
+      run: kubectl rollout restart deployment/vmalert-victoria-metrics-alert-server -n metrics
